@@ -1,33 +1,41 @@
 use std::ops;
 
 #[derive(Debug)]
-struct Value<T> {
-    data: T,
+enum DataType {
+    U32(u32),
+    F64(f64),
+}
+
+#[derive(Debug)]
+struct Value {
+    data: DataType,
 }
 
 
-impl<T> Value<T> {
-    pub fn new(data: T) -> Self  {
+impl Value {
+    pub fn new(data: DataType) -> Self {
         Value { data }
     }
 }
 
-impl<T> ops::Add for Value<T>
-where T: ops::Add<Output = T> {
-    type Output = Value<T> ;
+impl ops::Add for Value {
+    type Output = DataType;
 
     fn add(self, rhs: Self) -> Self::Output {
-        Value::new(self.data + rhs.data)
-    }
-}
-
-
-impl<T> ops::Mul for Value<T>
-    where T: ops::Mul<Output = T> {
-    type Output = Value<T> ;
-
-    fn mul(self, rhs: Self) -> Self::Output {
-        Value::new(self.data * rhs.data)
+        match (self.data, rhs.data) {
+            (DataType::F64(f), DataType::U32(u)) => {
+                DataType::F64(f + u as f64)
+            }
+            (DataType::F64(f), DataType::F64(u)) => {
+                DataType::F64(f + u as f64)
+            }
+            (DataType::U32(f), DataType::U32(u)) => {
+                DataType::U32(f + u)
+            }
+            (DataType::U32(f), DataType::F64(u)) => {
+                DataType::F64(f as f64 + u)
+            }
+        }
     }
 }
 
@@ -37,11 +45,12 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let v1 = Value::new(1);
+        let v1 = Value::new(DataType::U32(1));
         println!("{:?}", v1);
-        let v2 = Value::new(2);
+        let v2 = Value::new(DataType::F64(2.0));
         println!("{:?}", v1 + v2);
-        println!("{:?}", Value::new(1) * Value::new(2));
-        println!("{:?}", Value::new(1) * Value::new(2) + Value::new(3));
+        // println!("{:?}", Value::new(1) * Value::new(2));
+        // println!("{:?}", Value::new(1) * Value::new(2) + Value::new(3));
+        // println!("{:?}", Value::new(1.0) * Value::new(2) + Value::new(3));
     }
 }
