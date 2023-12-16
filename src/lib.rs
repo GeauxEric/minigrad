@@ -23,12 +23,19 @@ struct Value {
     data: DataType,
     prev: Vec<Value>,
     op: Op,
+    label: String,
 }
 
 
 impl Value {
     pub fn new(data: DataType) -> Self {
-        Value { data, prev: vec![], op: Op::default() }
+        Value { data, prev: vec![], op: Op::default(), label: "".to_string() }
+    }
+
+    pub fn new_with_label(data: DataType, label: impl Into<String>) -> Self {
+        let mut v = Self::new(data);
+        v.with_label(label);
+        v
     }
 
     pub fn with_child(&mut self, child: Value) {
@@ -37,6 +44,10 @@ impl Value {
 
     pub fn with_op(&mut self, op: Op) {
         self.op = op;
+    }
+
+    pub fn with_label(&mut self, label: impl Into<String>) {
+        self.label = label.into();
     }
 }
 
@@ -72,12 +83,11 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let v1 = Value::new(DataType::U32(1));
+        let v1 = Value::new_with_label(DataType::U32(1), "v1");
         println!("{:?}", v1);
-        let v2 = Value::new(DataType::F64(2.0));
-        println!("{:?}", v1 + v2);
-        // println!("{:?}", Value::new(1) * Value::new(2));
-        // println!("{:?}", Value::new(1) * Value::new(2) + Value::new(3));
-        // println!("{:?}", Value::new(1.0) * Value::new(2) + Value::new(3));
+        let v2 = Value::new_with_label(DataType::F64(2.0), "v2");
+        let mut v3 = v1 + v2;
+        v3.with_label("v3");
+        println!("{:?}", v3);
     }
 }
