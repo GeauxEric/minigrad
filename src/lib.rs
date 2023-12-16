@@ -2,8 +2,27 @@ use std::ops;
 
 #[derive(Debug, Clone)]
 enum DataType {
-    U32(u32),
-    F64(f64),
+    F32(f32),
+}
+
+impl ops::Add for DataType {
+    type Output = DataType;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (DataType::F32(v1), DataType::F32(v2)) => DataType::F32(v1 + v2)
+        }
+    }
+}
+
+impl ops::Mul for DataType {
+    type Output = DataType;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (DataType::F32(v1), DataType::F32(v2)) => DataType::F32(v1 * v2)
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -56,20 +75,7 @@ impl ops::Add for Value {
     type Output = Value;
 
     fn add(self, rhs: Self) -> Self::Output {
-        let data = match (self.data.clone(), rhs.data.clone()) {
-            (DataType::F64(f), DataType::U32(u)) => {
-                DataType::F64(f + u as f64)
-            }
-            (DataType::F64(f), DataType::F64(f2)) => {
-                DataType::F64(f + f2)
-            }
-            (DataType::U32(f), DataType::U32(u)) => {
-                DataType::U32(f + u)
-            }
-            (DataType::U32(u1), DataType::F64(f)) => {
-                DataType::F64(u1 as f64 + f)
-            }
-        };
+        let data = self.data.clone() + rhs.data.clone();
         let mut v = Value::new(data);
         v.with_child(self.clone());
         v.with_child(rhs.clone());
@@ -82,20 +88,7 @@ impl ops::Mul for Value {
     type Output = Value;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        let data = match (self.data.clone(), rhs.data.clone()) {
-            (DataType::F64(f), DataType::U32(u)) => {
-                DataType::F64(f * u as f64)
-            }
-            (DataType::F64(f), DataType::F64(f2)) => {
-                DataType::F64(f * f2)
-            }
-            (DataType::U32(f), DataType::U32(u)) => {
-                DataType::U32(f * u)
-            }
-            (DataType::U32(u1), DataType::F64(f)) => {
-                DataType::F64(u1 as f64 * f)
-            }
-        };
+        let data = self.data.clone() * rhs.data.clone();
         let mut v = Value::new(data);
         v.with_child(self.clone());
         v.with_child(rhs.clone());
@@ -110,13 +103,13 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let v1 = Value::new_with_label(DataType::U32(1), "v1");
+        let v1 = Value::new_with_label(DataType::F32(1.0), "v1");
         println!("{:?}", v1);
-        let v2 = Value::new_with_label(DataType::F64(2.0), "v2");
+        let v2 = Value::new_with_label(DataType::F32(2.0), "v2");
         let mut v3 = v1 + v2;
         v3.with_label("v3");
         println!("{:?}", v3);
-        let mut v5 = v3 * Value::new_with_label(DataType::F64(3.0), "v4");
+        let mut v5 = v3 * Value::new_with_label(DataType::F32(3.0), "v4");
         v5.with_label("v5");
         println!("{:?}", v5);
     }
