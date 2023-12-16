@@ -7,19 +7,36 @@ enum DataType {
 }
 
 #[derive(Debug, Clone)]
+enum Op {
+    NoOp,
+    Plus,
+}
+
+impl Default for Op {
+    fn default() -> Self {
+        Op::NoOp
+    }
+}
+
+#[derive(Debug, Clone)]
 struct Value {
     data: DataType,
-    prev: Vec<Value>
+    prev: Vec<Value>,
+    op: Op,
 }
 
 
 impl Value {
     pub fn new(data: DataType) -> Self {
-        Value { data , prev: vec![]}
+        Value { data, prev: vec![], op: Op::default() }
     }
 
-    pub fn add_child(&mut self, child: Value) {
+    pub fn with_child(&mut self, child: Value) {
         self.prev.push(child)
+    }
+
+    pub fn with_op(&mut self, op: Op) {
+        self.op = op;
     }
 }
 
@@ -42,8 +59,9 @@ impl ops::Add for Value {
             }
         };
         let mut v = Value::new(data);
-        v.add_child(self.clone());
-        v.add_child(rhs.clone());
+        v.with_child(self.clone());
+        v.with_child(rhs.clone());
+        v.with_op(Op::Plus);
         v
     }
 }
