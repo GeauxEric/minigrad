@@ -1,28 +1,33 @@
 use std::ops;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum DataType {
     U32(u32),
     F64(f64),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Value {
     data: DataType,
+    prev: Vec<Value>
 }
 
 
 impl Value {
     pub fn new(data: DataType) -> Self {
-        Value { data }
+        Value { data , prev: vec![]}
+    }
+
+    pub fn add_child(&mut self, child: Value) {
+        self.prev.push(child)
     }
 }
 
 impl ops::Add for Value {
-    type Output = DataType;
+    type Output = Value;
 
     fn add(self, rhs: Self) -> Self::Output {
-        match (self.data, rhs.data) {
+        let data = match (self.data.clone(), rhs.data.clone()) {
             (DataType::F64(f), DataType::U32(u)) => {
                 DataType::F64(f + u as f64)
             }
@@ -35,7 +40,11 @@ impl ops::Add for Value {
             (DataType::U32(f), DataType::F64(u)) => {
                 DataType::F64(f as f64 + u)
             }
-        }
+        };
+        let mut v = Value::new(data);
+        v.add_child(self.clone());
+        v.add_child(rhs.clone());
+        v
     }
 }
 
