@@ -10,6 +10,7 @@ enum DataType {
 enum Op {
     NoOp,
     Plus,
+    Mul,
 }
 
 impl Default for Op {
@@ -59,20 +60,46 @@ impl ops::Add for Value {
             (DataType::F64(f), DataType::U32(u)) => {
                 DataType::F64(f + u as f64)
             }
-            (DataType::F64(f), DataType::F64(u)) => {
-                DataType::F64(f + u as f64)
+            (DataType::F64(f), DataType::F64(f2)) => {
+                DataType::F64(f + f2)
             }
             (DataType::U32(f), DataType::U32(u)) => {
                 DataType::U32(f + u)
             }
-            (DataType::U32(f), DataType::F64(u)) => {
-                DataType::F64(f as f64 + u)
+            (DataType::U32(u1), DataType::F64(f)) => {
+                DataType::F64(u1 as f64 + f)
             }
         };
         let mut v = Value::new(data);
         v.with_child(self.clone());
         v.with_child(rhs.clone());
         v.with_op(Op::Plus);
+        v
+    }
+}
+
+impl ops::Mul for Value {
+    type Output = Value;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        let data = match (self.data.clone(), rhs.data.clone()) {
+            (DataType::F64(f), DataType::U32(u)) => {
+                DataType::F64(f * u as f64)
+            }
+            (DataType::F64(f), DataType::F64(f2)) => {
+                DataType::F64(f * f2)
+            }
+            (DataType::U32(f), DataType::U32(u)) => {
+                DataType::U32(f * u)
+            }
+            (DataType::U32(u1), DataType::F64(f)) => {
+                DataType::F64(u1 as f64 * f)
+            }
+        };
+        let mut v = Value::new(data);
+        v.with_child(self.clone());
+        v.with_child(rhs.clone());
+        v.with_op(Op::Mul);
         v
     }
 }
@@ -89,5 +116,8 @@ mod tests {
         let mut v3 = v1 + v2;
         v3.with_label("v3");
         println!("{:?}", v3);
+        let mut v5 = v3 * Value::new_with_label(DataType::F64(3.0), "v4");
+        v5.with_label("v5");
+        println!("{:?}", v5);
     }
 }
