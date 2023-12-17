@@ -1,3 +1,4 @@
+use std::fmt::Formatter;
 use std::ops;
 
 #[derive(Debug, Clone)]
@@ -5,12 +6,22 @@ enum DataType {
     F32(f32),
 }
 
+impl std::fmt::Display for DataType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DataType::F32(v) => {
+                write!(f, "{}", v)
+            }
+        }
+    }
+}
+
 impl ops::Add for DataType {
     type Output = DataType;
 
     fn add(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (DataType::F32(v1), DataType::F32(v2)) => DataType::F32(v1 + v2)
+            (DataType::F32(v1), DataType::F32(v2)) => DataType::F32(v1 + v2),
         }
     }
 }
@@ -20,12 +31,12 @@ impl ops::Mul for DataType {
 
     fn mul(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (DataType::F32(v1), DataType::F32(v2)) => DataType::F32(v1 * v2)
+            (DataType::F32(v1), DataType::F32(v2)) => DataType::F32(v1 * v2),
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum Op {
     NoOp,
     Plus,
@@ -46,10 +57,30 @@ struct Value {
     label: String,
 }
 
+impl std::fmt::Display for Op {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Op::NoOp => {
+                write!(f, "{}", "no-op")
+            }
+            Op::Plus => {
+                write!(f, "{}", "+")
+            }
+            Op::Mul => {
+                write!(f, "{}", "*")
+            }
+        }
+    }
+}
 
 impl Value {
     pub fn new(data: DataType) -> Self {
-        Value { data, prev: vec![], op: Op::default(), label: "".to_string() }
+        Value {
+            data,
+            prev: vec![],
+            op: Op::default(),
+            label: "".to_string(),
+        }
     }
 
     pub fn new_with_label(data: DataType, label: impl Into<String>) -> Self {
@@ -68,6 +99,10 @@ impl Value {
 
     pub fn with_label(&mut self, label: impl Into<String>) {
         self.label = label.into();
+    }
+
+    pub fn is_leaf(&self) -> bool {
+        return self.op == Op::NoOp;
     }
 }
 
@@ -99,7 +134,31 @@ impl ops::Mul for Value {
 
 #[cfg(test)]
 mod tests {
+    use graphviz_rust::cmd::CommandArg;
+    use graphviz_rust::dot_generator::*;
+    use graphviz_rust::dot_structures::*;
+    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
+
     use super::*;
+
+    /// Plot the computation graph
+    fn plot_computation_graph(value: &Value, graph: &mut Graph) {
+        let id = &value.label;
+        let label = format!("data={}", value.data);
+        let n = node!(id, vec![attr!("label", esc label)]);
+        graph.add_stmt(n.into());
+        if value.is_leaf() {
+            return;
+        }
+
+        for child in &value.prev {
+            // build the edge to the child value
+            let child_id = &child.label;
+            let e = edge!(node_id!(id) => node_id!(child_id), vec![attr!("label", esc format!("{}", value.op))]);
+            graph.add_stmt(e.into());
+            plot_computation_graph(&child, graph)
+        }
+    }
 
     #[test]
     fn it_works() {
@@ -112,5 +171,14 @@ mod tests {
         let mut v5 = v3 * Value::new_with_label(DataType::F32(3.0), "v4");
         v5.with_label("v5");
         println!("{:?}", v5);
+
+        let mut g = graph!(id!("computation"));
+        plot_computation_graph(&v5, &mut g);
+        let _graph_svg = exec(
+            g,
+            &mut PrinterContext::default(),
+            vec![Format::Svg.into(), CommandArg::Output("1.svg".to_string())],
+        )
+        .unwrap();
     }
 }
