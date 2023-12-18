@@ -34,6 +34,18 @@ impl std::ops::Add for DType {
     }
 }
 
+impl std::ops::Mul for DType {
+    type Output = DType;
+    fn mul(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (DType::U8(v1), DType::F32(v2)) => (v1 as f32 * v2).into(),
+            (DType::U8(v1), DType::U8(v2)) => (v1 * v2).into(),
+            (DType::F32(v1), DType::F32(v2)) => (v1 * v2).into(),
+            (DType::F32(v1), DType::U8(v2)) => (v1 * v2 as f32).into(),
+        }
+    }
+}
+
 impl Value {
     pub fn new(data: impl Into<DType>) -> Self {
         Value { data: data.into() }
@@ -45,6 +57,15 @@ impl std::ops::Add for Value {
     type Output = Value;
     fn add(self, rhs: Self) -> Self::Output {
         let d = self.data + rhs.data;
+        Value::new(d)
+    }
+}
+
+/// Mul
+impl std::ops::Mul for Value {
+    type Output = Value;
+    fn mul(self, rhs: Self) -> Self::Output {
+        let d = self.data * rhs.data;
         Value::new(d)
     }
 }
@@ -61,5 +82,8 @@ mod tests {
         println!("{:?} {:?}", v1, v2);
         let v3 = v1 + v2;
         println!("{:?}", v3);
+        let v4 = Value::new(3);
+        let v5 = v4 * v3;
+        println!("{:?}", v5);
     }
 }
