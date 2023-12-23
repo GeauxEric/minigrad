@@ -6,6 +6,18 @@ enum DType {
     U8(u8),
 }
 
+impl From<f32> for DType {
+    fn from(value: f32) -> Self {
+        DType::F32(value)
+    }
+}
+
+impl From<u8> for DType {
+    fn from(value: u8) -> Self {
+        DType::U8(value)
+    }
+}
+
 impl std::fmt::Display for DType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -19,41 +31,26 @@ impl std::fmt::Display for DType {
     }
 }
 
-impl From<f32> for DType {
-    fn from(value: f32) -> Self {
-        DType::F32(value)
-    }
-}
-
-impl From<u8> for DType {
-    fn from(value: u8) -> Self {
-        DType::U8(value)
-    }
-}
-
-impl std::ops::Add for DType {
-    type Output = DType;
-    fn add(self, rhs: Self) -> Self::Output {
-        match (self, rhs) {
-            (DType::U8(v1), DType::F32(v2)) => (v1 as f32 + v2).into(),
-            (DType::U8(v1), DType::U8(v2)) => (v1 + v2).into(),
-            (DType::F32(v1), DType::F32(v2)) => (v1 + v2).into(),
-            (DType::F32(v1), DType::U8(v2)) => (v1 + v2 as f32).into(),
+macro_rules! data_type_op_impl {
+    ($func:ident, $bound:ident, $op:tt) => {
+        impl std::ops::$bound for DType {
+            type Output = DType;
+            fn $func(self, rhs: Self) -> Self::Output {
+                match (self, rhs) {
+                    (DType::U8(v1), DType::F32(v2)) => (v1 as f32 $op v2).into(),
+                    (DType::U8(v1), DType::U8(v2)) => (v1 $op v2).into(),
+                    (DType::F32(v1), DType::F32(v2)) => (v1 $op v2).into(),
+                    (DType::F32(v1), DType::U8(v2)) => (v1 $op v2 as f32).into(),
+                }
+            }
         }
-    }
+    };
 }
 
-impl std::ops::Mul for DType {
-    type Output = DType;
-    fn mul(self, rhs: Self) -> Self::Output {
-        match (self, rhs) {
-            (DType::U8(v1), DType::F32(v2)) => (v1 as f32 * v2).into(),
-            (DType::U8(v1), DType::U8(v2)) => (v1 * v2).into(),
-            (DType::F32(v1), DType::F32(v2)) => (v1 * v2).into(),
-            (DType::F32(v1), DType::U8(v2)) => (v1 * v2 as f32).into(),
-        }
-    }
-}
+data_type_op_impl!(sub, Sub, -);
+data_type_op_impl!(add, Add, +);
+data_type_op_impl!(mul, Mul, *);
+data_type_op_impl!(div, Div, /);
 
 #[derive(Debug, Clone, PartialEq)]
 enum Op {
@@ -142,10 +139,10 @@ impl std::ops::Mul for Value {
 
 #[cfg(test)]
 mod tests {
+    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
     use graphviz_rust::cmd::CommandArg::Output;
     use graphviz_rust::dot_generator::*;
     use graphviz_rust::dot_structures::*;
-    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
 
     use crate::Value;
 
@@ -168,9 +165,6 @@ mod tests {
             viz_computation_graph(p, graph);
         }
     }
-
-    #[test]
-    fn graphviz() {}
 
     #[test]
     fn it_works() {
