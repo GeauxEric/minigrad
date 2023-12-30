@@ -54,7 +54,7 @@ data_type_op_impl!(div, Div, /);
 
 #[derive(Debug, Clone, PartialEq)]
 enum Op {
-    NoOp,
+    None,
     Plus,
     Mul,
 }
@@ -62,7 +62,7 @@ enum Op {
 impl std::fmt::Display for Op {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Op::NoOp => {
+            Op::None => {
                 write!(f, "")
             }
             Op::Plus => {
@@ -92,22 +92,45 @@ struct Value {
     prev: Vec<Value>,
 }
 
-impl Value {
+struct ValueBuilder(Value);
+
+impl ValueBuilder {
     pub fn new(data: impl Into<DType>) -> Self {
-        Value {
+        ValueBuilder(Value {
             data: data.into(),
-            label: "".into(),
-            op: Op::NoOp,
+            label: "".to_string(),
+            op: Op::None,
             prev: vec![],
-        }
+        })
     }
 
+    pub fn label(&mut self, label: &str) -> &mut Self {
+        self.0.label = label.to_string();
+        self
+    }
+
+    pub fn op(&mut self, op: Op) -> &mut Self {
+        self.0.op = op;
+        self
+    }
+
+    pub fn add_prev(&mut self, prev: Value) -> &mut Self {
+        self.0.prev.push(prev);
+        self
+    }
+
+    pub fn build(self) -> Value {
+        self.0
+    }
+}
+
+impl Value {
     pub fn is_leaf(&self) -> bool {
-        self.op == Op::NoOp
+        self.op == Op::None
     }
 
-    pub fn set_label(&mut self, label: impl Into<String>) {
-        self.label = label.into();
+    pub fn set_label(&mut self, label: &str) {
+        self.label = label.to_string()
     }
 }
 
@@ -116,11 +139,9 @@ impl std::ops::Add for Value {
     type Output = Value;
     fn add(self, rhs: Self) -> Self::Output {
         let d = self.clone().data + rhs.clone().data;
-        let mut v = Value::new(d);
-        v.op = Op::Plus;
-        v.prev.push(self);
-        v.prev.push(rhs);
-        v
+        let mut v = ValueBuilder::new(d);
+        v.op(Op::Plus).add_prev(self).add_prev(rhs);
+        v.build()
     }
 }
 
@@ -129,22 +150,20 @@ impl std::ops::Mul for Value {
     type Output = Value;
     fn mul(self, rhs: Self) -> Self::Output {
         let d = self.clone().data * rhs.clone().data;
-        let mut v = Value::new(d);
-        v.op = Op::Mul;
-        v.prev.push(self);
-        v.prev.push(rhs);
-        v
+        let mut v = ValueBuilder::new(d);
+        v.op(Op::Mul).add_prev(self).add_prev(rhs);
+        v.build()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
     use graphviz_rust::cmd::CommandArg::Output;
     use graphviz_rust::dot_generator::*;
     use graphviz_rust::dot_structures::*;
+    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
 
-    use crate::Value;
+    use crate::{Value, ValueBuilder};
 
     fn viz_computation_graph(value: &Value, graph: &mut Graph) {
         let value_node_id = value.label.clone();
@@ -159,8 +178,7 @@ mod tests {
         }
         // otherwise, recursively add to the graph
         for p in &value.prev {
-            let p_node_id = p.label.clone();
-            let e = edge!(node_id!(p_node_id) => node_id!(value_node_id), vec![attr!("label", esc format!("{}", value.op))]);
+            let e = edge!(node_id!(p.label) => node_id!(value_node_id), vec![attr!("label", esc format!("{}", value.op))]);
             graph.add_stmt(e.into());
             viz_computation_graph(p, graph);
         }
@@ -168,23 +186,26 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let mut v1 = Value::new(1);
-        v1.set_label("v1");
-        let mut v2 = Value::new(1.0);
-        v2.set_label("v2");
+        let mut v1 = ValueBuilder::new(1);
+        v1.label("v1");
+        let v1 = v1.build();
+        let mut v2 = ValueBuilder::new(1.0);
+        v2.label("v2");
+        let v2 = v2.build();
         println!("{:?} {:?}", v1, v2);
         let mut v3 = v1 + v2;
         v3.set_label("v3");
         println!("{:?}", v3);
-        let mut v4 = Value::new(3);
-        v4.set_label("v4");
+        let mut v4 = ValueBuilder::new(3);
+        v4.label("v4");
+        let v4 = v4.build();
         let mut v5 = v4 * v3;
         v5.set_label("v5");
         println!("{:?}", v5);
 
         let mut g = graph!(id!("computation"));
         viz_computation_graph(&v5, &mut g);
-        let graph_svg = exec(
+        let _graph_svg = exec(
             g,
             &mut PrinterContext::default(),
             vec![Format::Svg.into(), Output("./1.svg".into())],
