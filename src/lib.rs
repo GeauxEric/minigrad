@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::fmt::Formatter;
 use std::ops;
 use std::rc::Rc;
@@ -25,6 +26,15 @@ impl ops::Add for DataType {
     }
 }
 
+impl ops::Mul<f32> for &DataType {
+    type Output = f32;
+    fn mul(self, rhs: f32) -> Self::Output {
+        match self {
+            DataType::F32(f) => rhs * f,
+        }
+    }
+}
+
 impl ops::Mul for DataType {
     type Output = DataType;
 
@@ -35,7 +45,7 @@ impl ops::Mul for DataType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Copy)]
 enum Op {
     NoOp,
     Plus,
@@ -48,7 +58,7 @@ impl Default for Op {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct ValueId(usize);
 
 impl ValueId {
@@ -93,18 +103,11 @@ impl std::fmt::Display for Op {
 
 /// TODO: cyclic dependency can lead to memory leak
 #[derive(Debug)]
-struct Value(Rc<Value_>);
+struct Value(Rc<RefCell<Value_>>);
 
 impl Clone for Value {
     fn clone(&self) -> Self {
         Value(self.0.clone())
-    }
-}
-
-impl std::ops::Deref for Value {
-    type Target = Value_;
-    fn deref(&self) -> &Self::Target {
-        self.0.as_ref()
     }
 }
 
@@ -139,16 +142,83 @@ impl Value_ {
     }
 }
 
+fn get_siblings_data(children: &[Value], child: &Value) -> Vec<DataType> {
+    let mut data = vec![];
+    for c in children {
+        if c.0.borrow().id != child.0.borrow().id {
+            data.push(c.0.borrow().data.clone())
+        }
+    }
+    data
+}
+
+fn backprop(value: Value, siblings_data: Vec<DataType>, parent_op: Op, parent_grad: f32) {
+    match parent_op {
+        Op::NoOp => {
+            panic!("Should not reach here because parent value is already a leaf.")
+        }
+        Op::Plus => {
+            // parent = value + sibling
+            // d(parent) / d(value) = 1
+            // d(root) / d(value) = 1 * d(root) / d(parent) = 1 * parent_grad
+            let mut v = value.0.borrow_mut();
+            v.grad = 1.0 * parent_grad;
+            if v.is_leaf() {
+                return;
+            }
+            let children = v.prev.clone();
+            for child_v in &children {
+                let my_siblings = get_siblings_data(&children, child_v);
+                backprop(child_v.clone(), my_siblings, v.op, v.grad)
+            }
+        }
+        Op::Mul => {
+            // parent = value * sibling
+            // d(parent) / d(value) = sibling
+            // d(root) / d(value) = sibling * d(root) / d(parent) = sibling * parent_grad
+            let mut v = value.0.borrow_mut();
+            assert_eq!(
+                siblings_data.len(),
+                1,
+                "total number of operands for Op::Mul should be 2"
+            );
+            let s = &siblings_data[0];
+            v.grad = s * parent_grad;
+            if v.is_leaf() {
+                return;
+            }
+            let children = v.prev.clone();
+            for child_v in &children {
+                let my_siblings_data = get_siblings_data(&children, child_v);
+                backprop(child_v.clone(), my_siblings_data, v.op, v.grad)
+            }
+        }
+    }
+}
+
+fn backprop_root(root: Value) {
+    let mut r = root.0.borrow_mut();
+    r.grad = 1.0;
+    if r.is_leaf() {
+        return;
+    }
+    let children = r.prev.clone();
+    children.iter().for_each(|c| {
+        let my_siblings_data = get_siblings_data(&children, c);
+        backprop(c.clone(), my_siblings_data, r.op, r.grad);
+    })
+}
+
 impl ops::Add for Value {
     type Output = Value;
 
     fn add(self, rhs: Self) -> Self::Output {
-        let data = self.0.data.clone() + rhs.0.data.clone();
+        let data = self.0.borrow().data.clone() + rhs.0.borrow().data.clone();
         let mut v = Value_::new(data);
         v.with_child(self.clone())
             .with_child(rhs.clone())
             .with_op(Op::Plus);
-        Value(Rc::new(v))
+        Value(Rc::new(RefCell::new(v)))
     }
 }
 
@@ -156,12 +226,12 @@ impl ops::Mul for Value {
     type Output = Value;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        let data = self.0.data.clone() * rhs.0.data.clone();
+        let data = self.0.borrow().data.clone() * rhs.0.borrow().data.clone();
         let mut v = Value_::new(data);
         v.with_child(self.clone())
             .with_child(rhs.clone())
             .with_op(Op::Mul);
-        Value(Rc::new(v))
+        Value(Rc::new(RefCell::new(v)))
     }
 }
 
@@ -175,23 +245,23 @@ mod tests {
     use super::*;
 
     /// Plot the computation graph
-    fn plot_computation_graph(value: &Value_, graph: &mut Graph) {
-        let id = &value.id;
+    fn plot_computation_graph(value: &Value, graph: &mut Graph) {
+        let v = value.0.borrow();
+        let id = &v.id;
         let n = node!(
             id,
-            vec![
-                attr!("label", esc format!("{} | data {} | grad {}", value.id, value.data, value.grad))
-            ]
+            vec![attr!("label", esc format!("{} | data {} | grad {}", id, v.data, v.grad))]
         );
         graph.add_stmt(n.into());
-        if value.is_leaf() {
+        if v.is_leaf() {
             return;
         }
 
-        for child in &value.prev {
+        for child in &v.prev {
             // build the edge to the child value
-            let child_id = &child.id;
-            let e = edge!(node_id!(id) => node_id!(child_id), vec![attr!("label", esc format!("{}", value.op))]);
+            let child_v = child.0.borrow();
+            let child_id = &child_v.id;
+            let e = edge!(node_id!(id) => node_id!(child_id), vec![attr!("label", esc format!("{}", v.op))]);
             graph.add_stmt(e.into());
             plot_computation_graph(child, graph)
         }
@@ -199,15 +269,15 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let v1 = Value(Rc::new(Value_::new(DataType::F32(1.0))));
+        let v1 = Value(Rc::new(RefCell::new(Value_::new(DataType::F32(1.0)))));
         let v2 = Value_::new(DataType::F32(2.0));
-        let v2 = Value(Rc::new(v2));
+        let v2 = Value(Rc::new(RefCell::new(v2)));
         let v3 = v1 + v2;
-        println!("{:?}", v3);
-        let v4 = Value_::new(DataType::F32(3.0));
-        let v4 = Value(Rc::new(v4));
+        let v4 = Value_::new(DataType::F32(6.0));
+        let v4 = Value(Rc::new(RefCell::new(v4)));
         let v5 = v3 * v4;
-        println!("{:?}", v5);
+
+        backprop_root(v5.clone());
 
         let mut g = graph!(id!("computation"));
         plot_computation_graph(&v5, &mut g);
