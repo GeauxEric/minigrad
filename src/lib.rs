@@ -1,5 +1,6 @@
 use std::fmt::Formatter;
 use std::ops;
+use std::rc::Rc;
 
 #[derive(Debug, Clone)]
 enum DataType {
@@ -48,11 +49,29 @@ impl Default for Op {
 }
 
 #[derive(Debug, Clone)]
-struct Value {
+struct ValueId(usize);
+
+impl ValueId {
+    fn new() -> Self {
+        // https://users.rust-lang.org/t/idiomatic-rust-way-to-generate-unique-id/33805
+        use std::sync::atomic;
+        static COUNTER: atomic::AtomicUsize = atomic::AtomicUsize::new(1);
+        Self(COUNTER.fetch_add(1, atomic::Ordering::Relaxed))
+    }
+}
+
+impl std::fmt::Display for ValueId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Value_ {
     data: DataType,
     prev: Vec<Value>,
     op: Op,
-    label: String,
+    id: ValueId,
     grad: f32,
 }
 
@@ -72,21 +91,32 @@ impl std::fmt::Display for Op {
     }
 }
 
-impl Value {
+/// TODO: cyclic dependency can lead to memory leak
+#[derive(Debug)]
+struct Value(Rc<Value_>);
+
+impl Clone for Value {
+    fn clone(&self) -> Self {
+        Value(self.0.clone())
+    }
+}
+
+impl std::ops::Deref for Value {
+    type Target = Value_;
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref()
+    }
+}
+
+impl Value_ {
     pub fn new(data: DataType) -> Self {
-        Value {
+        Value_ {
             data,
             prev: vec![],
             op: Op::default(),
-            label: "".to_string(),
+            id: ValueId::new(),
             grad: 0f32,
         }
-    }
-
-    pub fn new_with_label(data: DataType, label: impl Into<String>) -> Self {
-        let mut v = Self::new(data);
-        v.with_label(label);
-        v
     }
 
     pub fn with_child(&mut self, child: Value) -> &mut Self {
@@ -96,11 +126,6 @@ impl Value {
 
     pub fn with_op(&mut self, op: Op) -> &mut Self {
         self.op = op;
-        self
-    }
-
-    pub fn with_label(&mut self, label: impl Into<String>) -> &mut Self {
-        self.label = label.into();
         self
     }
 
@@ -118,12 +143,12 @@ impl ops::Add for Value {
     type Output = Value;
 
     fn add(self, rhs: Self) -> Self::Output {
-        let data = self.data.clone() + rhs.data.clone();
-        let mut v = Value::new(data);
+        let data = self.0.data.clone() + rhs.0.data.clone();
+        let mut v = Value_::new(data);
         v.with_child(self.clone())
             .with_child(rhs.clone())
             .with_op(Op::Plus);
-        v
+        Value(Rc::new(v))
     }
 }
 
@@ -131,31 +156,31 @@ impl ops::Mul for Value {
     type Output = Value;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        let data = self.data.clone() * rhs.data.clone();
-        let mut v = Value::new(data);
+        let data = self.0.data.clone() * rhs.0.data.clone();
+        let mut v = Value_::new(data);
         v.with_child(self.clone())
             .with_child(rhs.clone())
             .with_op(Op::Mul);
-        v
+        Value(Rc::new(v))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
     use graphviz_rust::cmd::CommandArg;
     use graphviz_rust::dot_generator::*;
     use graphviz_rust::dot_structures::*;
+    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
 
     use super::*;
 
     /// Plot the computation graph
-    fn plot_computation_graph(value: &Value, graph: &mut Graph) {
-        let id = &value.label;
+    fn plot_computation_graph(value: &Value_, graph: &mut Graph) {
+        let id = &value.id;
         let n = node!(
             id,
             vec![
-                attr!("label", esc format!("{} | data {} | grad {}", value.label, value.data, value.grad))
+                attr!("label", esc format!("{} | data {} | grad {}", value.id, value.data, value.grad))
             ]
         );
         graph.add_stmt(n.into());
@@ -165,7 +190,7 @@ mod tests {
 
         for child in &value.prev {
             // build the edge to the child value
-            let child_id = &child.label;
+            let child_id = &child.id;
             let e = edge!(node_id!(id) => node_id!(child_id), vec![attr!("label", esc format!("{}", value.op))]);
             graph.add_stmt(e.into());
             plot_computation_graph(child, graph)
@@ -174,14 +199,14 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let v1 = Value::new_with_label(DataType::F32(1.0), "v1");
-        println!("{:?}", v1);
-        let v2 = Value::new_with_label(DataType::F32(2.0), "v2");
-        let mut v3 = v1 + v2;
-        v3.with_label("v3");
+        let v1 = Value(Rc::new(Value_::new(DataType::F32(1.0))));
+        let v2 = Value_::new(DataType::F32(2.0));
+        let v2 = Value(Rc::new(v2));
+        let v3 = v1 + v2;
         println!("{:?}", v3);
-        let mut v5 = v3 * Value::new_with_label(DataType::F32(3.0), "v4");
-        v5.with_label("v5");
+        let v4 = Value_::new(DataType::F32(3.0));
+        let v4 = Value(Rc::new(v4));
+        let v5 = v3 * v4;
         println!("{:?}", v5);
 
         let mut g = graph!(id!("computation"));
