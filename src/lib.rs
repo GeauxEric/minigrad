@@ -9,9 +9,7 @@ enum DataType {
 impl std::fmt::Display for DataType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            DataType::F32(v) => {
-                write!(f, "{}", v)
-            }
+            DataType::F32(v) => v.fmt(f),
         }
     }
 }
@@ -55,6 +53,7 @@ struct Value {
     prev: Vec<Value>,
     op: Op,
     label: String,
+    grad: f32,
 }
 
 impl std::fmt::Display for Op {
@@ -80,6 +79,7 @@ impl Value {
             prev: vec![],
             op: Op::default(),
             label: "".to_string(),
+            grad: 0f32,
         }
     }
 
@@ -89,16 +89,24 @@ impl Value {
         v
     }
 
-    pub fn with_child(&mut self, child: Value) {
-        self.prev.push(child)
+    pub fn with_child(&mut self, child: Value) -> &mut Self {
+        self.prev.push(child);
+        self
     }
 
-    pub fn with_op(&mut self, op: Op) {
+    pub fn with_op(&mut self, op: Op) -> &mut Self {
         self.op = op;
+        self
     }
 
-    pub fn with_label(&mut self, label: impl Into<String>) {
+    pub fn with_label(&mut self, label: impl Into<String>) -> &mut Self {
         self.label = label.into();
+        self
+    }
+
+    pub fn with_grad(&mut self, grad: f32) -> &mut Self {
+        self.grad = grad;
+        self
     }
 
     pub fn is_leaf(&self) -> bool {
@@ -112,9 +120,9 @@ impl ops::Add for Value {
     fn add(self, rhs: Self) -> Self::Output {
         let data = self.data.clone() + rhs.data.clone();
         let mut v = Value::new(data);
-        v.with_child(self.clone());
-        v.with_child(rhs.clone());
-        v.with_op(Op::Plus);
+        v.with_child(self.clone())
+            .with_child(rhs.clone())
+            .with_op(Op::Plus);
         v
     }
 }
@@ -125,27 +133,31 @@ impl ops::Mul for Value {
     fn mul(self, rhs: Self) -> Self::Output {
         let data = self.data.clone() * rhs.data.clone();
         let mut v = Value::new(data);
-        v.with_child(self.clone());
-        v.with_child(rhs.clone());
-        v.with_op(Op::Mul);
+        v.with_child(self.clone())
+            .with_child(rhs.clone())
+            .with_op(Op::Mul);
         v
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
     use graphviz_rust::cmd::CommandArg;
     use graphviz_rust::dot_generator::*;
     use graphviz_rust::dot_structures::*;
-    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
 
     use super::*;
 
     /// Plot the computation graph
     fn plot_computation_graph(value: &Value, graph: &mut Graph) {
         let id = &value.label;
-        let label = format!("data={}", value.data);
-        let n = node!(id, vec![attr!("label", esc label)]);
+        let n = node!(
+            id,
+            vec![
+                attr!("label", esc format!("{} | data {} | grad {}", value.label, value.data, value.grad))
+            ]
+        );
         graph.add_stmt(n.into());
         if value.is_leaf() {
             return;
@@ -156,7 +168,7 @@ mod tests {
             let child_id = &child.label;
             let e = edge!(node_id!(id) => node_id!(child_id), vec![attr!("label", esc format!("{}", value.op))]);
             graph.add_stmt(e.into());
-            plot_computation_graph(&child, graph)
+            plot_computation_graph(child, graph)
         }
     }
 
