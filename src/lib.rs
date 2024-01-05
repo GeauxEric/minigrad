@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt::Formatter;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +44,81 @@ struct Value {
     grad: f32,
 }
 
+/// Calculate grad from root value
+fn calculate_grad(root: &mut Value) {
+    root.set_grad(1.0);
+
+    if root.is_leaf() {
+        return;
+    }
+    let mut prev = HashMap::new();
+    root.prev.iter().for_each(|v| {
+        prev.insert(v.label.clone(), v.data);
+    });
+    root.prev.iter_mut().for_each(|v| {
+        let mut my_prev = prev.clone();
+        my_prev.remove(&v.label);
+        let sibling_data: Vec<f32> = my_prev.values().cloned().collect();
+        calculate_grad_non_root(v, root.grad, root.op.clone(), &sibling_data)
+    })
+}
+
+fn calculate_grad_non_root(
+    value: &mut Value,
+    parent_grad: f32,
+    parent_op: Op,
+    sibling_data: &Vec<f32>,
+) {
+    match parent_op {
+        Op::NoOp => {
+            panic!("should not reach here! Calculate grad of prev of leaf node.")
+        }
+        Op::Plus => {
+            // v = v1 + v2
+            // d(v) / d(v1) = 1
+            // d(L) / d(v1) = d(L) / d(v) * d(v) / d(v1) = parent_grad * 1.0
+            let local_grad = 1.0;
+            let grad = parent_grad * local_grad;
+            value.set_grad(grad);
+            if value.is_leaf() {
+                return;
+            }
+            let mut prev = HashMap::new();
+            value.prev.iter().for_each(|v| {
+                prev.insert(v.label.clone(), v.data);
+            });
+            value.prev.iter_mut().for_each(|v| {
+                let mut my_prev = prev.clone();
+                my_prev.remove(&v.label);
+                let sibling_data: Vec<f32> = my_prev.values().cloned().collect();
+                calculate_grad_non_root(v, value.grad, value.op.clone(), &sibling_data)
+            })
+        }
+        Op::Mul => {
+            // v = v1 * v2
+            // d(v) / d(v1) = v2
+            // d(L) / d(v1) = d(L) / d(v) * d(v) / d(v1) = parent_grad * v2
+            assert_eq!(sibling_data.len(), 1);
+            let v2 = sibling_data[0];
+            let grad = parent_grad * v2;
+            value.set_grad(grad);
+            if value.is_leaf() {
+                return;
+            }
+            let mut prev = HashMap::new();
+            value.prev.iter().for_each(|v| {
+                prev.insert(v.label.clone(), v.data);
+            });
+            value.prev.iter_mut().for_each(|v| {
+                let mut my_prev = prev.clone();
+                my_prev.remove(&v.label);
+                let sibling_data: Vec<f32> = my_prev.values().cloned().collect();
+                calculate_grad_non_root(v, value.grad, value.op.clone(), &sibling_data)
+            })
+        }
+    }
+}
+
 impl Value {
     pub fn new(data: f32) -> Self {
         Value {
@@ -60,6 +136,10 @@ impl Value {
 
     pub fn set_label(&mut self, label: impl Into<String>) {
         self.label = label.into();
+    }
+
+    pub fn set_grad(&mut self, grad: f32) {
+        self.grad = grad;
     }
 }
 
@@ -96,7 +176,7 @@ mod tests {
     use graphviz_rust::dot_structures::*;
     use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
 
-    use crate::Value;
+    use crate::{calculate_grad, Value};
 
     fn viz_computation_graph(value: &Value, graph: &mut Graph) {
         let value_node_id = value.label.clone();
@@ -122,7 +202,7 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let mut v1 = Value::new(2.0);
+        let mut v1 = Value::new(3.0);
         v1.set_label("v1");
         let mut v2 = Value::new(2.0);
         v2.set_label("v2");
@@ -135,6 +215,8 @@ mod tests {
         let mut v5 = v4 + v3;
         v5.set_label("L");
         println!("{:?}", v5);
+
+        calculate_grad(&mut v5);
 
         let mut g = graph!(id!("computation"));
         viz_computation_graph(&v5, &mut g);
