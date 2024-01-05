@@ -38,6 +38,9 @@ struct Value {
     /// values that were used to produce this value
     /// TODO: avoid clone
     prev: Vec<Value>,
+
+    /// derivative of root value w.r.t. this value
+    grad: f32,
 }
 
 impl Value {
@@ -47,6 +50,7 @@ impl Value {
             label: "".into(),
             op: Op::NoOp,
             prev: vec![],
+            grad: 0.0,
         }
     }
 
@@ -87,10 +91,10 @@ impl std::ops::Mul for Value {
 
 #[cfg(test)]
 mod tests {
-    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
     use graphviz_rust::cmd::CommandArg::Output;
     use graphviz_rust::dot_generator::*;
     use graphviz_rust::dot_structures::*;
+    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
 
     use crate::Value;
 
@@ -98,7 +102,9 @@ mod tests {
         let value_node_id = value.label.clone();
         let value_node = node!(
             value_node_id,
-            vec![attr!("label", esc format!("{} | data={}", value.label, value.data))]
+            vec![
+                attr!("label", esc format!("{} | data={} grad={}", value.label, value.data, value.grad))
+            ]
         );
         graph.add_stmt(value_node.into());
         // if value is the leaf, add node to graph and return
