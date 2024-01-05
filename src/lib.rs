@@ -1,57 +1,5 @@
 use std::fmt::Formatter;
 
-#[derive(Debug, Clone)]
-enum DType {
-    F32(f32),
-    U8(u8),
-}
-
-impl From<f32> for DType {
-    fn from(value: f32) -> Self {
-        DType::F32(value)
-    }
-}
-
-impl From<u8> for DType {
-    fn from(value: u8) -> Self {
-        DType::U8(value)
-    }
-}
-
-impl std::fmt::Display for DType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DType::F32(v) => {
-                write!(f, "{}", v)
-            }
-            DType::U8(v) => {
-                write!(f, "{}", v)
-            }
-        }
-    }
-}
-
-macro_rules! data_type_op_impl {
-    ($func:ident, $bound:ident, $op:tt) => {
-        impl std::ops::$bound for DType {
-            type Output = DType;
-            fn $func(self, rhs: Self) -> Self::Output {
-                match (self, rhs) {
-                    (DType::U8(v1), DType::F32(v2)) => (v1 as f32 $op v2).into(),
-                    (DType::U8(v1), DType::U8(v2)) => (v1 $op v2).into(),
-                    (DType::F32(v1), DType::F32(v2)) => (v1 $op v2).into(),
-                    (DType::F32(v1), DType::U8(v2)) => (v1 $op v2 as f32).into(),
-                }
-            }
-        }
-    };
-}
-
-data_type_op_impl!(sub, Sub, -);
-data_type_op_impl!(add, Add, +);
-data_type_op_impl!(mul, Mul, *);
-data_type_op_impl!(div, Div, /);
-
 #[derive(Debug, Clone, PartialEq)]
 enum Op {
     NoOp,
@@ -79,7 +27,7 @@ impl std::fmt::Display for Op {
 #[derive(Debug, Clone)]
 struct Value {
     /// current data
-    data: DType,
+    data: f32,
 
     /// uid
     label: String,
@@ -93,9 +41,9 @@ struct Value {
 }
 
 impl Value {
-    pub fn new(data: impl Into<DType>) -> Self {
+    pub fn new(data: f32) -> Self {
         Value {
-            data: data.into(),
+            data,
             label: "".into(),
             op: Op::NoOp,
             prev: vec![],
@@ -115,7 +63,7 @@ impl Value {
 impl std::ops::Add for Value {
     type Output = Value;
     fn add(self, rhs: Self) -> Self::Output {
-        let d = self.clone().data + rhs.clone().data;
+        let d = self.data + rhs.data;
         let mut v = Value::new(d);
         v.op = Op::Plus;
         v.prev.push(self);
@@ -128,7 +76,7 @@ impl std::ops::Add for Value {
 impl std::ops::Mul for Value {
     type Output = Value;
     fn mul(self, rhs: Self) -> Self::Output {
-        let d = self.clone().data * rhs.clone().data;
+        let d = self.data * rhs.data;
         let mut v = Value::new(d);
         v.op = Op::Mul;
         v.prev.push(self);
@@ -150,7 +98,7 @@ mod tests {
         let value_node_id = value.label.clone();
         let value_node = node!(
             value_node_id,
-            vec![attr!("label", esc format!("{}", value.data))]
+            vec![attr!("label", esc format!("{} | data={}", value.label, value.data))]
         );
         graph.add_stmt(value_node.into());
         // if value is the leaf, add node to graph and return
@@ -168,26 +116,26 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let mut v1 = Value::new(1);
+        let mut v1 = Value::new(2.0);
         v1.set_label("v1");
-        let mut v2 = Value::new(1.0);
+        let mut v2 = Value::new(2.0);
         v2.set_label("v2");
         println!("{:?} {:?}", v1, v2);
-        let mut v3 = v1 + v2;
+        let mut v3 = v1 * v2;
         v3.set_label("v3");
         println!("{:?}", v3);
-        let mut v4 = Value::new(3);
+        let mut v4 = Value::new(1.0);
         v4.set_label("v4");
-        let mut v5 = v4 * v3;
-        v5.set_label("v5");
+        let mut v5 = v4 + v3;
+        v5.set_label("L");
         println!("{:?}", v5);
 
         let mut g = graph!(id!("computation"));
         viz_computation_graph(&v5, &mut g);
-        let graph_svg = exec(
+        let _graph_svg = exec(
             g,
             &mut PrinterContext::default(),
-            vec![Format::Svg.into(), Output("./1.svg".into())],
+            vec![Format::Png.into(), Output("./1.png".into())],
         )
         .unwrap();
     }
