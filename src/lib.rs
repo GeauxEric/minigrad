@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug, Clone)]
 enum Op {
-    NoOp,
+    None,
     Plus(Value, Value),
     Mul(Value, Value),
 }
@@ -14,7 +14,7 @@ enum Op {
 impl std::fmt::Display for Op {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Op::NoOp => {
+            Op::None => {
                 write!(f, "")
             }
             Op::Plus(_, _) => {
@@ -50,84 +50,76 @@ impl Deref for Value {
     type Target = Value_;
 
     fn deref(&self) -> &Self::Target {
-        return &self.0
+        &self.0
     }
 }
 
 /// Calculate grad from root value
-// fn calculate_grad(root: &mut Value_) {
-//     root.set_grad(1.0);
-//
-//     if root.is_leaf() {
-//         return;
-//     }
-//     let mut prev = HashMap::new();
-//     root.prev.iter().for_each(|v| {
-//         prev.insert(v.id.clone(), v.data);
-//     });
-//     root.prev.iter_mut().for_each(|v| {
-//         let mut my_prev = prev.clone();
-//         my_prev.remove(&v.id);
-//         let sibling_data: Vec<f32> = my_prev.values().cloned().collect();
-//         calculate_grad_non_root(v, root.grad, root.op.clone(), &sibling_data)
-//     })
-// }
+fn calculate_grad(root: &mut Value) {
+    *root.0.grad.borrow_mut() = 1.0;
 
-// fn calculate_grad_non_root(
-//     value: &mut Value_,
-//     parent_grad: f32,
-//     parent_op: Op,
-//     sibling_data: &Vec<f32>,
-// ) {
-//     match parent_op {
-//         Op::NoOp => {
-//             panic!("should not reach here! Calculate grad of prev of leaf node.")
-//         }
-//         Op::Plus => {
-//             // v = v1 + v2
-//             // d(v) / d(v1) = 1
-//             // d(L) / d(v1) = d(L) / d(v) * d(v) / d(v1) = parent_grad * 1.0
-//             let local_grad = 1.0;
-//             let grad = parent_grad * local_grad;
-//             value.set_grad(grad);
-//             if value.is_leaf() {
-//                 return;
-//             }
-//             let mut prev = HashMap::new();
-//             value.prev.iter().for_each(|v| {
-//                 prev.insert(v.id.clone(), v.data);
-//             });
-//             value.prev.iter_mut().for_each(|v| {
-//                 let mut my_prev = prev.clone();
-//                 my_prev.remove(&v.id);
-//                 let sibling_data: Vec<f32> = my_prev.values().cloned().collect();
-//                 calculate_grad_non_root(v, value.grad, value.op.clone(), &sibling_data)
-//             })
-//         }
-//         Op::Mul => {
-//             // v = v1 * v2
-//             // d(v) / d(v1) = v2
-//             // d(L) / d(v1) = d(L) / d(v) * d(v) / d(v1) = parent_grad * v2
-//             assert_eq!(sibling_data.len(), 1);
-//             let v2 = sibling_data[0];
-//             let grad = parent_grad * v2;
-//             value.set_grad(grad);
-//             if value.is_leaf() {
-//                 return;
-//             }
-//             let mut prev = HashMap::new();
-//             value.prev.iter().for_each(|v| {
-//                 prev.insert(v.id.clone(), v.data);
-//             });
-//             value.prev.iter_mut().for_each(|v| {
-//                 let mut my_prev = prev.clone();
-//                 my_prev.remove(&v.id);
-//                 let sibling_data: Vec<f32> = my_prev.values().cloned().collect();
-//                 calculate_grad_non_root(v, value.grad, value.op.clone(), &sibling_data)
-//             })
-//         }
-//     }
-// }
+    match root.op.clone() {
+        Op::None => {}
+        Op::Plus(ref mut v1, ref mut v2) => {
+            calculate_grad_non_root(v1, *root.grad.borrow(), &root.op);
+            calculate_grad_non_root(v2, *root.grad.borrow(), &root.op);
+        }
+        Op::Mul(ref mut v1, ref mut v2) => {
+            calculate_grad_non_root(v1, *root.grad.borrow(), &root.op);
+            calculate_grad_non_root(v2, *root.grad.borrow(), &root.op);
+        }
+    }
+}
+
+fn calculate_grad_non_root(value: &mut Value, parent_grad: f32, parent_op: &Op) {
+    match parent_op {
+        Op::None => {
+            panic!("should not reach here! Calculate grad of prev of leaf node.")
+        }
+        Op::Plus(_, _) => {
+            // v = v1 + v2
+            // d(v) / d(v1) = 1
+            // d(L) / d(v1) = d(L) / d(v) * d(v) / d(v1) = parent_grad * 1.0
+            let local_grad = 1.0;
+            let grad = parent_grad * local_grad;
+            *value.0.grad.borrow_mut() += grad;
+            match value.op.clone() {
+                Op::None => {}
+                Op::Plus(ref mut v1, ref mut v2) => {
+                    calculate_grad_non_root(v1, *value.grad.borrow(), &value.op);
+                    calculate_grad_non_root(v2, *value.grad.borrow(), &value.op);
+                }
+                Op::Mul(ref mut v1, ref mut v2) => {
+                    calculate_grad_non_root(v1, *value.grad.borrow(), &value.op);
+                    calculate_grad_non_root(v2, *value.grad.borrow(), &value.op);
+                }
+            }
+        }
+        Op::Mul(v1, v2) => {
+            // v = v1 * v2
+            // d(v) / d(v1) = v2
+            // d(L) / d(v1) = d(L) / d(v) * d(v) / d(v1) = parent_grad * v2
+            let d = if v1.id == value.id {
+                v2.get_data()
+            } else {
+                v1.get_data()
+            };
+            let grad = parent_grad * d;
+            *value.0.grad.borrow_mut() += grad;
+            match value.op.clone() {
+                Op::None => {}
+                Op::Plus(ref mut v1, ref mut v2) => {
+                    calculate_grad_non_root(v1, *value.grad.borrow(), &value.op);
+                    calculate_grad_non_root(v2, *value.grad.borrow(), &value.op);
+                }
+                Op::Mul(ref mut v1, ref mut v2) => {
+                    calculate_grad_non_root(v1, *value.grad.borrow(), &value.op);
+                    calculate_grad_non_root(v2, *value.grad.borrow(), &value.op);
+                }
+            }
+        }
+    }
+}
 
 fn get_id() -> usize {
     static COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -146,20 +138,9 @@ impl Value_ {
         Value_ {
             data: RefCell::new(data),
             id,
-            op: Op::NoOp,
+            op: Op::None,
             grad: RefCell::new(0.0),
         }
-    }
-
-    pub fn is_leaf(&self) -> bool {
-        match self.op {
-            Op::NoOp => { true }
-            Op::Plus(_, _) | Op::Mul(_, _) => { false }
-        }
-    }
-
-    pub fn set_grad(&mut self, grad: f32) {
-        *self.grad.borrow_mut() = grad;
     }
 
     pub fn get_data(&self) -> f32 {
@@ -174,7 +155,7 @@ impl std::ops::Add<&Value> for &Value {
     fn add(self, rhs: &Value) -> Self::Output {
         let d = self.get_data() + rhs.get_data();
         let mut v = Value_::new(d);
-        v.op = Op::Mul((*self).clone(), (*rhs).clone());
+        v.op = Op::Plus((*self).clone(), (*rhs).clone());
         Value(Rc::new(v))
     }
 }
@@ -198,7 +179,7 @@ mod tests {
     use graphviz_rust::dot_generator::*;
     use graphviz_rust::dot_structures::*;
 
-    use crate::{Op, Value};
+    use crate::{calculate_grad, Op, Value};
 
     fn viz_computation_graph(value: &Value, graph: &mut Graph) {
         let value_node_id = value.id;
@@ -209,13 +190,8 @@ mod tests {
             ]
         );
         graph.add_stmt(value_node.into());
-        // if value is the leaf, add node to graph and return
-        if value.is_leaf() {
-            return;
-        }
-        // otherwise, recursively add to the graph
         match &value.op {
-            Op::NoOp => {}
+            Op::None => {}
             Op::Plus(v1, v2) | Op::Mul(v1, v2) => {
                 let p_node_id = v1.id;
                 let e = edge!(node_id!(p_node_id) => node_id!(value_node_id), vec![attr!("label", esc format!("{}", value.op))]);
@@ -232,24 +208,18 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let v1 = Value::new(3.0);
-        let v2 = Value::new(2.0);
-        println!("{:?} {:?}", v1, v2);
-        let v3 = &v1 * &v2;
-        println!("{:?}", v3);
-        let v4 = Value::new(1.0);
-        let v5 = &v4 + &v3;
-        println!("{:?}", v5);
-        let v6 = Value::new(6.0);
-        let v7 = &v6 + &v1;
-        let v8 = &v5 * &v7;
+        let a = Value::new(-2.0);
+        let b = Value::new(3.0);
+        let d = &a * &b;
+        let e = &a + &b;
+        let mut f = &d * &e;
 
-        // calculate_grad(&mut v5);
+        calculate_grad(&mut f);
 
-        let mut g = graph!(id!("computation"));
-        viz_computation_graph(&v8, &mut g);
+        let mut graph = graph!(id!("computation"));
+        viz_computation_graph(&f, &mut graph);
         let _graph_svg = exec(
-            g,
+            graph,
             &mut PrinterContext::default(),
             vec![Format::Png.into(), Output("./1.png".into())],
         )
