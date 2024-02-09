@@ -55,23 +55,26 @@ impl Deref for Value {
 }
 
 /// Calculate grad from root value
-fn calculate_grad(root: &mut Value) {
+fn calculate_grad(root: &Value) {
     *root.0.grad.borrow_mut() = 1.0;
+    calculate_operand_grad(root);
+}
 
-    match root.op.clone() {
+fn calculate_operand_grad(value: &Value) {
+    match &value.op {
         Op::None => {}
-        Op::Plus(ref mut v1, ref mut v2) => {
-            calculate_grad_non_root(v1, *root.grad.borrow(), &root.op);
-            calculate_grad_non_root(v2, *root.grad.borrow(), &root.op);
+        Op::Plus(ref v1, ref v2) => {
+            calculate_non_root_grad(v1, *value.grad.borrow(), &value.op);
+            calculate_non_root_grad(v2, *value.grad.borrow(), &value.op);
         }
-        Op::Mul(ref mut v1, ref mut v2) => {
-            calculate_grad_non_root(v1, *root.grad.borrow(), &root.op);
-            calculate_grad_non_root(v2, *root.grad.borrow(), &root.op);
+        Op::Mul(ref v1, ref v2) => {
+            calculate_non_root_grad(v1, *value.grad.borrow(), &value.op);
+            calculate_non_root_grad(v2, *value.grad.borrow(), &value.op);
         }
     }
 }
 
-fn calculate_grad_non_root(value: &mut Value, parent_grad: f32, parent_op: &Op) {
+fn calculate_non_root_grad(value: &Value, parent_grad: f32, parent_op: &Op) {
     match parent_op {
         Op::None => {
             panic!("should not reach here! Calculate grad of prev of leaf node.")
@@ -83,17 +86,7 @@ fn calculate_grad_non_root(value: &mut Value, parent_grad: f32, parent_op: &Op) 
             let local_grad = 1.0;
             let grad = parent_grad * local_grad;
             *value.0.grad.borrow_mut() += grad;
-            match value.op.clone() {
-                Op::None => {}
-                Op::Plus(ref mut v1, ref mut v2) => {
-                    calculate_grad_non_root(v1, *value.grad.borrow(), &value.op);
-                    calculate_grad_non_root(v2, *value.grad.borrow(), &value.op);
-                }
-                Op::Mul(ref mut v1, ref mut v2) => {
-                    calculate_grad_non_root(v1, *value.grad.borrow(), &value.op);
-                    calculate_grad_non_root(v2, *value.grad.borrow(), &value.op);
-                }
-            }
+            calculate_operand_grad(value);
         }
         Op::Mul(v1, v2) => {
             // v = v1 * v2
@@ -106,17 +99,7 @@ fn calculate_grad_non_root(value: &mut Value, parent_grad: f32, parent_op: &Op) 
             };
             let grad = parent_grad * d;
             *value.0.grad.borrow_mut() += grad;
-            match value.op.clone() {
-                Op::None => {}
-                Op::Plus(ref mut v1, ref mut v2) => {
-                    calculate_grad_non_root(v1, *value.grad.borrow(), &value.op);
-                    calculate_grad_non_root(v2, *value.grad.borrow(), &value.op);
-                }
-                Op::Mul(ref mut v1, ref mut v2) => {
-                    calculate_grad_non_root(v1, *value.grad.borrow(), &value.op);
-                    calculate_grad_non_root(v2, *value.grad.borrow(), &value.op);
-                }
-            }
+            calculate_operand_grad(value)
         }
     }
 }
@@ -212,9 +195,9 @@ mod tests {
         let b = Value::new(3.0);
         let d = &a * &b;
         let e = &a + &b;
-        let mut f = &d * &e;
+        let f = &d * &e;
 
-        calculate_grad(&mut f);
+        calculate_grad(&f);
 
         let mut graph = graph!(id!("computation"));
         viz_computation_graph(&f, &mut graph);
