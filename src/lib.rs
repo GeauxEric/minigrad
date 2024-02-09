@@ -9,6 +9,7 @@ enum Op {
     None,
     Plus(Value, Value),
     Mul(Value, Value),
+    Tanh(Value),
 }
 
 impl std::fmt::Display for Op {
@@ -22,6 +23,9 @@ impl std::fmt::Display for Op {
             }
             Op::Mul(_, _) => {
                 write!(f, "*")
+            }
+            Op::Tanh(_) => {
+                write!(f, "tanh")
             }
         }
     }
@@ -63,13 +67,16 @@ fn calculate_grad(root: &Value) {
 fn calculate_operand_grad(value: &Value) {
     match &value.op {
         Op::None => {}
-        Op::Plus(ref v1, ref v2) => {
+        Op::Plus(v1, v2) => {
             calculate_non_root_grad(v1, *value.grad.borrow(), &value.op);
             calculate_non_root_grad(v2, *value.grad.borrow(), &value.op);
         }
-        Op::Mul(ref v1, ref v2) => {
+        Op::Mul(v1, v2) => {
             calculate_non_root_grad(v1, *value.grad.borrow(), &value.op);
             calculate_non_root_grad(v2, *value.grad.borrow(), &value.op);
+        }
+        Op::Tanh(v1) => {
+            calculate_non_root_grad(v1, *value.grad.borrow(), &value.op);
         }
     }
 }
@@ -101,6 +108,16 @@ fn calculate_non_root_grad(value: &Value, parent_grad: f32, parent_op: &Op) {
             *value.0.grad.borrow_mut() += grad;
             calculate_operand_grad(value)
         }
+        Op::Tanh(v1) => {
+            // v = tanh(v1)
+            // d(v) / d(v1) = 1 - (tanh(v1)) ^ 2
+            // d(L) / d(v1) = parent_grad * (1 - (tanh(v1)) ^ 2)
+            let d = v1.get_data();
+            let local_grad = 1.0 - d.tanh().powi(2);
+            let grad = parent_grad * local_grad;
+            *value.0.grad.borrow_mut() += grad;
+            calculate_operand_grad(v1);
+        }
     }
 }
 
@@ -112,6 +129,14 @@ fn get_id() -> usize {
 impl Value {
     pub fn new(data: f32) -> Self {
         Value(Rc::new(Value_::new(data)))
+    }
+
+    pub fn tanh(&self) -> Self {
+        let d = *self.data.borrow();
+        let t = ((2.0 * d).exp() - 1.0) / ((2.0 * d).exp() + 1.0);
+        let mut v = Value_::new(t);
+        v.op = Op::Tanh(self.clone());
+        Value(Rc::new(v))
     }
 }
 
@@ -173,18 +198,22 @@ mod tests {
             ]
         );
         graph.add_stmt(value_node.into());
+
+        let viz_operand = |v1: &Value, g: &mut Graph| {
+            let p_node_id = v1.id;
+            let e = edge!(node_id!(p_node_id) => node_id!(value.id), vec![attr!("label", esc format!("{}", value.op))]);
+            g.add_stmt(e.into());
+            viz_computation_graph(v1, g);
+        };
+
         match &value.op {
             Op::None => {}
             Op::Plus(v1, v2) | Op::Mul(v1, v2) => {
-                let p_node_id = v1.id;
-                let e = edge!(node_id!(p_node_id) => node_id!(value_node_id), vec![attr!("label", esc format!("{}", value.op))]);
-                graph.add_stmt(e.into());
-                viz_computation_graph(v1, graph);
-
-                let p_node_id = v2.id;
-                let e = edge!(node_id!(p_node_id) => node_id!(value_node_id), vec![attr!("label", esc format!("{}", value.op))]);
-                graph.add_stmt(e.into());
-                viz_computation_graph(v2, graph);
+                viz_operand(v1, graph);
+                viz_operand(v2, graph);
+            }
+            Op::Tanh(v1) => {
+                viz_operand(v1, graph);
             }
         }
     }
@@ -196,11 +225,12 @@ mod tests {
         let d = &a * &b;
         let e = &a + &b;
         let f = &d * &e;
+        let g = f.tanh();
 
-        calculate_grad(&f);
+        calculate_grad(&g);
 
         let mut graph = graph!(id!("computation"));
-        viz_computation_graph(&f, &mut graph);
+        viz_computation_graph(&g, &mut graph);
         let _graph_svg = exec(
             graph,
             &mut PrinterContext::default(),
