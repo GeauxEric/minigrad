@@ -48,6 +48,9 @@ struct Value_ {
 
     /// derivative of root value w.r.t. this value
     grad: RefCell<f32>,
+
+    /// if true, the data shall be updated during the optimization process
+    is_variable: bool,
 }
 
 impl Deref for Value {
@@ -82,6 +85,10 @@ fn calculate_operand_grad(value: &Value) {
 }
 
 fn calculate_non_root_grad(value: &Value, parent_grad: f32, parent_op: &Op) {
+    // no usage of grad for non-variable
+    if !value.is_variable {
+        return;
+    }
     match parent_op {
         Op::None => {
             panic!("should not reach here! Calculate grad of prev of leaf node.")
@@ -128,24 +135,25 @@ fn get_id() -> usize {
 
 impl Value {
     pub fn new(data: f32) -> Self {
-        Value(Rc::new(Value_::new(data)))
+        Value(Rc::new(Value_::new(data, false)))
     }
 
     pub fn tanh(&self) -> Self {
         let d = *self.data.borrow();
         let t = ((2.0 * d).exp() - 1.0) / ((2.0 * d).exp() + 1.0);
-        let mut v = Value_::new(t);
+        let mut v = Value_::new(t, true);
         v.op = Op::Tanh(self.clone());
         Value(Rc::new(v))
     }
 }
 
 impl Value_ {
-    pub fn new(data: f32) -> Self {
+    pub fn new(data: f32, is_variable: bool) -> Self {
         let id = get_id();
         Value_ {
             data: RefCell::new(data),
             id,
+            is_variable,
             op: Op::None,
             grad: RefCell::new(0.0),
         }
@@ -153,6 +161,10 @@ impl Value_ {
 
     pub fn get_data(&self) -> f32 {
         return *self.data.borrow();
+    }
+
+    pub fn get_grad(&self) -> f32 {
+        return *self.grad.borrow();
     }
 }
 
@@ -162,7 +174,7 @@ impl std::ops::Add<&Value> for &Value {
 
     fn add(self, rhs: &Value) -> Self::Output {
         let d = self.get_data() + rhs.get_data();
-        let mut v = Value_::new(d);
+        let mut v = Value_::new(d, true);
         v.op = Op::Plus((*self).clone(), (*rhs).clone());
         Value(Rc::new(v))
     }
@@ -174,7 +186,7 @@ impl std::ops::Mul<&Value> for &Value {
 
     fn mul(self, rhs: &Value) -> Self::Output {
         let d = self.get_data() * rhs.get_data();
-        let mut v = Value_::new(d);
+        let mut v = Value_::new(d, true);
         v.op = Op::Mul((*self).clone(), (*rhs).clone());
         Value(Rc::new(v))
     }
@@ -182,10 +194,10 @@ impl std::ops::Mul<&Value> for &Value {
 
 #[cfg(test)]
 mod tests {
-    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
     use graphviz_rust::cmd::CommandArg::Output;
     use graphviz_rust::dot_generator::*;
     use graphviz_rust::dot_structures::*;
+    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
 
     use crate::{calculate_grad, Op, Value};
 
@@ -194,7 +206,10 @@ mod tests {
         let value_node = node!(
             value_node_id,
             vec![
-                attr!("label", esc format!("{} | data={} grad={}", value.id, value.data.borrow(), value.grad.borrow()))
+                attr!("label", esc format!("{} | data={} grad={} {}",
+                    value.id, value.get_data(), value.get_grad(),
+                    { if !value.is_variable { "non-variable" } else { "" } }
+                ))
             ]
         );
         graph.add_stmt(value_node.into());
