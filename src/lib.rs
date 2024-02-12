@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::fmt::Formatter;
 use std::ops::Deref;
 use std::rc::Rc;
@@ -155,49 +156,94 @@ impl std::ops::Mul<&Value> for &Value {
     }
 }
 
+fn topological_order(value: Value) -> Vec<Value> {
+    let mut order = vec![];
+    let mut visited = HashSet::new();
+    fn build_topo(value: Value, visited: &mut HashSet<usize>, order: &mut Vec<Value>) {
+        if !visited.contains(&value.id) {
+            visited.insert(value.id);
+            match &value.op {
+                Op::None => {}
+                Op::Plus(v1, v2) => {
+                    build_topo(v1.clone(), visited, order);
+                    build_topo(v2.clone(), visited, order);
+                }
+                Op::Mul(v1, v2) => {
+                    build_topo(v1.clone(), visited, order);
+                    build_topo(v2.clone(), visited, order);
+                }
+            }
+            order.push(value)
+        }
+    }
+    build_topo(value, &mut visited, &mut order);
+    order
+}
+
 #[cfg(test)]
 mod tests {
-    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
     use graphviz_rust::cmd::CommandArg::Output;
     use graphviz_rust::dot_generator::*;
     use graphviz_rust::dot_structures::*;
+    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
 
-    use crate::{calculate_grad, Op, Value};
+    use crate::{topological_order, Op, Value};
 
     fn viz_computation_graph(value: &Value, graph: &mut Graph) {
-        let value_node_id = value.id;
-        let value_node = node!(
-            value_node_id,
-            vec![
-                attr!("label", esc format!("{} | data={} grad={}", value.id, value.data.borrow(), value.grad.borrow()))
-            ]
-        );
-        graph.add_stmt(value_node.into());
-        match &value.op {
-            Op::None => {}
-            Op::Plus(v1, v2) | Op::Mul(v1, v2) => {
-                let p_node_id = v1.id;
-                let e = edge!(node_id!(p_node_id) => node_id!(value_node_id), vec![attr!("label", esc format!("{}", value.op))]);
-                graph.add_stmt(e.into());
-                viz_computation_graph(v1, graph);
+        let mut tp_order = topological_order(value.clone());
+        tp_order.reverse();
+        let reverse_tp_order = tp_order;
 
-                let p_node_id = v2.id;
-                let e = edge!(node_id!(p_node_id) => node_id!(value_node_id), vec![attr!("label", esc format!("{}", value.op))]);
+        for value in &reverse_tp_order {
+            let value_node_id = value.id;
+            let value_node = node!(
+                value_node_id,
+                vec![
+                    attr!("label", esc format!("{} | data={} grad={} op={}", value.id, value.data.borrow(), value.grad.borrow(), value.op))
+                ]
+            );
+            graph.add_stmt(value_node.into());
+            let mut add_edge = |v: &Value| {
+                let p_node_id = v.id;
+                let e = edge!(node_id!(p_node_id) => node_id!(value_node_id));
                 graph.add_stmt(e.into());
-                viz_computation_graph(v2, graph);
+            };
+            match &value.op {
+                Op::None => {}
+                Op::Plus(v1, v2) => {
+                    add_edge(v1);
+                    add_edge(v2);
+                }
+                Op::Mul(v1, v2) => {
+                    add_edge(v1);
+                    add_edge(v2);
+                }
             }
         }
     }
 
     #[test]
+    fn topo_order() {
+        let a = Value::new(1.0);
+        let b = Value::new(2.0);
+        let c = &a + &b;
+        let d = Value::new(3.0);
+        let e = &c + &d;
+
+        let order = topological_order(e);
+        let ids: Vec<_> = order.into_iter().map(|v| v.id).collect();
+        println!("{:?}", ids);
+    }
+
+    #[test]
     fn it_works() {
         let a = Value::new(-2.0);
-        let b = Value::new(3.0);
-        let d = &a * &b;
-        let e = &a + &b;
-        let f = &d * &e;
+        let one = Value::new(1.0);
+        let c = &a * &one;
+        let b = &(&a * &one) + &c;
+        let f = &b * &c;
 
-        calculate_grad(&f);
+        // calculate_grad(&f);
 
         let mut graph = graph!(id!("computation"));
         viz_computation_graph(&f, &mut graph);
