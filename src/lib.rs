@@ -58,49 +58,24 @@ impl Deref for Value {
 /// Calculate grad from root value
 fn calculate_grad(root: &Value) {
     *root.0.grad.borrow_mut() = 1.0;
-    calculate_operand_grad(root);
-}
-
-fn calculate_operand_grad(value: &Value) {
-    match &value.op {
-        Op::None => {}
-        Op::Plus(ref v1, ref v2) => {
-            calculate_non_root_grad(v1, *value.grad.borrow(), &value.op);
-            calculate_non_root_grad(v2, *value.grad.borrow(), &value.op);
-        }
-        Op::Mul(ref v1, ref v2) => {
-            calculate_non_root_grad(v1, *value.grad.borrow(), &value.op);
-            calculate_non_root_grad(v2, *value.grad.borrow(), &value.op);
-        }
-    }
-}
-
-fn calculate_non_root_grad(value: &Value, parent_grad: f32, parent_op: &Op) {
-    match parent_op {
-        Op::None => {
-            panic!("should not reach here! Calculate grad of prev of leaf node.")
-        }
-        Op::Plus(_, _) => {
-            // v = v1 + v2
-            // d(v) / d(v1) = 1
-            // d(L) / d(v1) = d(L) / d(v) * d(v) / d(v1) = parent_grad * 1.0
-            let local_grad = 1.0;
-            let grad = parent_grad * local_grad;
-            *value.0.grad.borrow_mut() += grad;
-            calculate_operand_grad(value);
-        }
-        Op::Mul(v1, v2) => {
-            // v = v1 * v2
-            // d(v) / d(v1) = v2
-            // d(L) / d(v1) = d(L) / d(v) * d(v) / d(v1) = parent_grad * v2
-            let d = if v1.id == value.id {
-                v2.get_data()
-            } else {
-                v1.get_data()
-            };
-            let grad = parent_grad * d;
-            *value.0.grad.borrow_mut() += grad;
-            calculate_operand_grad(value)
+    let rev_tp_order = reverse_topological_order(root.clone());
+    for v in &rev_tp_order {
+        match &v.op {
+            Op::None => {}
+            Op::Plus(v1, v2) => {
+                // v = v1 + v2
+                // d(v) / d(v1) = 1
+                // d(L) / d(v1) = d(L) / d(v) * d(v) / d(v1) = parent_grad * 1.0
+                *v1.grad.borrow_mut() += v.get_grad();
+                *v2.grad.borrow_mut() += v.get_grad();
+            }
+            Op::Mul(v1, v2) => {
+                // v = v1 * v2
+                // d(v) / d(v1) = v2
+                // d(L) / d(v1) = d(L) / d(v) * d(v) / d(v1) = parent_grad * v2
+                *v1.grad.borrow_mut() += v.get_grad() * v2.get_data();
+                *v2.grad.borrow_mut() += v.get_grad() * v1.get_data();
+            }
         }
     }
 }
@@ -130,6 +105,10 @@ impl Value_ {
     pub fn get_data(&self) -> f32 {
         return *self.data.borrow();
     }
+
+    pub fn get_grad(&self) -> f32 {
+        return *self.grad.borrow();
+    }
 }
 
 /// Add operation
@@ -154,6 +133,12 @@ impl std::ops::Mul<&Value> for &Value {
         v.op = Op::Mul((*self).clone(), (*rhs).clone());
         Value(Rc::new(v))
     }
+}
+
+fn reverse_topological_order(value: Value) -> Vec<Value> {
+    let mut order = topological_order(value);
+    order.reverse();
+    order
 }
 
 fn topological_order(value: Value) -> Vec<Value> {
@@ -182,17 +167,15 @@ fn topological_order(value: Value) -> Vec<Value> {
 
 #[cfg(test)]
 mod tests {
+    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
     use graphviz_rust::cmd::CommandArg::Output;
     use graphviz_rust::dot_generator::*;
     use graphviz_rust::dot_structures::*;
-    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
 
-    use crate::{topological_order, Op, Value};
+    use crate::{calculate_grad, Op, reverse_topological_order, topological_order, Value};
 
     fn viz_computation_graph(value: &Value, graph: &mut Graph) {
-        let mut tp_order = topological_order(value.clone());
-        tp_order.reverse();
-        let reverse_tp_order = tp_order;
+        let reverse_tp_order = reverse_topological_order(value.clone());
 
         for value in &reverse_tp_order {
             let value_node_id = value.id;
@@ -243,7 +226,7 @@ mod tests {
         let b = &(&a * &one) + &c;
         let f = &b * &c;
 
-        // calculate_grad(&f);
+        calculate_grad(&f);
 
         let mut graph = graph!(id!("computation"));
         viz_computation_graph(&f, &mut graph);
