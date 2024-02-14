@@ -225,14 +225,40 @@ impl Layer {
     }
 }
 
+struct MLP {
+    layers: Vec<Layer>,
+}
+
+impl MLP {
+    /// nin: the input dimension
+    /// nouts: output dimensions for each layer
+    pub fn new(nin: usize, nouts: &[usize]) -> Self {
+        let mut sz = vec![nin];
+        sz.extend(nouts);
+        let mut layers = vec![];
+        for i in 0..nouts.len() {
+            layers.push(Layer::new(sz[i], sz[i + 1]))
+        }
+        MLP { layers }
+    }
+
+    pub fn apply(&self, x: &[Value]) -> Vec<Value> {
+        let mut input = x.to_vec();
+        for layer in &self.layers {
+            input = layer.apply(&input);
+        }
+        input
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
     use graphviz_rust::cmd::CommandArg::Output;
     use graphviz_rust::dot_generator::*;
     use graphviz_rust::dot_structures::*;
-    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
 
-    use crate::{calculate_grad, reverse_topological_order, topological_order, Layer, Op, Value};
+    use crate::{calculate_grad, Layer, MLP, Op, reverse_topological_order, topological_order, Value};
 
     fn viz_computation_graph(value: &Value, graph: &mut Graph) {
         let reverse_tp_order = reverse_topological_order(value.clone());
@@ -267,22 +293,20 @@ mod tests {
 
     #[test]
     fn mlp() {
-        let n1 = Layer::new(4, 2);
+        let nn = MLP::new(2, &[3, 2, 1]);
         let x = vec![
             Value::new(1.0),
             Value::new(2.0),
-            Value::new(3.0),
-            Value::new(4.0),
         ];
-        let r = n1.apply(&x);
-        let mut graph = graph!(id!("neuron"));
+        let r = nn.apply(&x);
+        let mut graph = graph!(id!("mlp"));
         for v in &r {
             viz_computation_graph(v, &mut graph);
         }
         let _graph_svg = exec(
             graph,
             &mut PrinterContext::default(),
-            vec![Format::Png.into(), Output("./neuron.png".into())],
+            vec![Format::Png.into(), Output("./mlp.png".into())],
         )
         .unwrap();
     }
