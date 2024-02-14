@@ -13,6 +13,7 @@ enum Op {
     None,
     Plus(Value, Value),
     Mul(Value, Value),
+    Tanh(Value),
 }
 
 impl std::fmt::Display for Op {
@@ -26,6 +27,9 @@ impl std::fmt::Display for Op {
             }
             Op::Mul(_, _) => {
                 write!(f, "*")
+            }
+            Op::Tanh(_) => {
+                write!(f, "tanh")
             }
         }
     }
@@ -79,6 +83,15 @@ fn calculate_grad(root: &Value) {
                 *v1.grad.borrow_mut() += v.get_grad() * v2.get_data();
                 *v2.grad.borrow_mut() += v.get_grad() * v1.get_data();
             }
+            Op::Tanh(v1) => {
+                // v = tanh(v1)
+                // d(v) / d(v1) = 1 - (tanh(v1)) ^ 2
+                // d(L) / d(v1) = parent_grad * (1 - (tanh(v1)) ^ 2)
+                let d = v1.get_data();
+                let local_grad = 1.0 - d.tanh().powi(2);
+                let grad = v.get_grad() * local_grad;
+                *v1.grad.borrow_mut() += grad;
+            }
         }
     }
 }
@@ -91,6 +104,14 @@ fn get_id() -> usize {
 impl Value {
     pub fn new(data: f32) -> Self {
         Value(Rc::new(Value_::new(data)))
+    }
+
+    pub fn tanh(&self) -> Self {
+        let d = *self.data.borrow();
+        let t = ((2.0 * d).exp() - 1.0) / ((2.0 * d).exp() + 1.0);
+        let mut v = Value_::new(t);
+        v.op = Op::Tanh(self.clone());
+        Value(Rc::new(v))
     }
 }
 
@@ -160,6 +181,9 @@ fn topological_order(value: Value) -> Vec<Value> {
                     build_topo(v1.clone(), visited, order);
                     build_topo(v2.clone(), visited, order);
                 }
+                Op::Tanh(v1) => {
+                    build_topo(v1.clone(), visited, order);
+                }
             }
             order.push(value)
         }
@@ -180,8 +204,7 @@ impl Neuron {
         let range = -1.0f32..=1.0;
         let random_numbers: Vec<f32> = (0..nin + 1)
             .map(|_| {
-                let f = rng.gen_range(range.clone());
-                f
+                rng.gen_range(range.clone())
             })
             .collect();
         Neuron {
@@ -193,7 +216,6 @@ impl Neuron {
         }
     }
 
-    // TODO: add non-linear activation
     pub fn apply(&self, x: &[Value]) -> Value {
         assert_eq!(
             x.len(),
@@ -205,7 +227,7 @@ impl Neuron {
             s = &s + &(xi * wi);
         }
         s = &s + &self.bias;
-        s
+        s.tanh()
     }
 }
 
@@ -258,7 +280,7 @@ mod tests {
     use graphviz_rust::dot_generator::*;
     use graphviz_rust::dot_structures::*;
 
-    use crate::{calculate_grad, Layer, MLP, Op, reverse_topological_order, topological_order, Value};
+    use crate::{calculate_grad, MLP, Op, reverse_topological_order, topological_order, Value};
 
     fn viz_computation_graph(value: &Value, graph: &mut Graph) {
         let reverse_tp_order = reverse_topological_order(value.clone());
@@ -286,6 +308,9 @@ mod tests {
                 Op::Mul(v1, v2) => {
                     add_edge(v1);
                     add_edge(v2);
+                }
+                Op::Tanh(v1) => {
+                    add_edge(v1);
                 }
             }
         }
