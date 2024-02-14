@@ -1,9 +1,12 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fmt::Formatter;
+use std::iter::zip;
 use std::ops::Deref;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+use rand::Rng;
 
 #[derive(Debug, Clone)]
 enum Op {
@@ -165,14 +168,71 @@ fn topological_order(value: Value) -> Vec<Value> {
     order
 }
 
+#[derive(Debug)]
+struct Neuron {
+    weights: Vec<Value>,
+    bias: Value,
+}
+
+impl Neuron {
+    pub fn new(nin: usize) -> Self {
+        let mut rng = rand::thread_rng();
+        let range = -1.0f32..=1.0;
+        let random_numbers: Vec<f32> = (0..nin + 1)
+            .map(|_| {
+                let f = rng.gen_range(range.clone());
+                f
+            })
+            .collect();
+        Neuron {
+            weights: random_numbers[..nin]
+                .iter()
+                .map(|f| Value::new(*f))
+                .collect(),
+            bias: Value::new(random_numbers[nin]),
+        }
+    }
+
+    // TODO: add non-linear activation
+    pub fn apply(&self, x: &[Value]) -> Value {
+        assert_eq!(
+            x.len(),
+            self.weights.len(),
+            "length of input vector not equal to length of weights"
+        );
+        let mut s = Value::new(0.0);
+        for (xi, wi) in zip(x, &self.weights) {
+            s = &s + &(xi * wi);
+        }
+        s = &s + &self.bias;
+        s
+    }
+}
+
+struct Layer {
+    neurons: Vec<Neuron>,
+}
+
+impl Layer {
+    pub fn new(nin: usize, nout: usize) -> Self {
+        Layer {
+            neurons: (0..nout).map(|_| Neuron::new(nin)).collect(),
+        }
+    }
+
+    pub fn apply(&self, x: &[Value]) -> Vec<Value> {
+        self.neurons.iter().map(|n| n.apply(x)).collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
     use graphviz_rust::cmd::CommandArg::Output;
     use graphviz_rust::dot_generator::*;
     use graphviz_rust::dot_structures::*;
+    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
 
-    use crate::{calculate_grad, Op, reverse_topological_order, topological_order, Value};
+    use crate::{calculate_grad, reverse_topological_order, topological_order, Layer, Op, Value};
 
     fn viz_computation_graph(value: &Value, graph: &mut Graph) {
         let reverse_tp_order = reverse_topological_order(value.clone());
@@ -203,6 +263,28 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn mlp() {
+        let n1 = Layer::new(4, 2);
+        let x = vec![
+            Value::new(1.0),
+            Value::new(2.0),
+            Value::new(3.0),
+            Value::new(4.0),
+        ];
+        let r = n1.apply(&x);
+        let mut graph = graph!(id!("neuron"));
+        for v in &r {
+            viz_computation_graph(v, &mut graph);
+        }
+        let _graph_svg = exec(
+            graph,
+            &mut PrinterContext::default(),
+            vec![Format::Png.into(), Output("./neuron.png".into())],
+        )
+        .unwrap();
     }
 
     #[test]
