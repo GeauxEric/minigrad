@@ -56,9 +56,6 @@ struct Value_ {
 
     /// derivative of root value w.r.t. this value
     grad: RefCell<f32>,
-
-    /// variable gets updated during optimization
-    is_variable: bool
 }
 
 impl Deref for Value {
@@ -117,31 +114,26 @@ fn get_id() -> usize {
 
 impl Value {
     pub fn new(data: f32) -> Self {
-        Value(Rc::new(Value_::new(data, false)))
-    }
-
-    pub fn new_variable(data: f32) -> Self {
-        Value(Rc::new(Value_::new(data, false)))
+        Value(Rc::new(Value_::new(data)))
     }
 
     pub fn tanh(&self) -> Self {
         let d = *self.data.borrow();
         let t = ((2.0 * d).exp() - 1.0) / ((2.0 * d).exp() + 1.0);
-        let mut v = Value_::new(t, false);
+        let mut v = Value_::new(t);
         v.op = Op::Tanh(self.clone());
         Value(Rc::new(v))
     }
 }
 
 impl Value_ {
-    pub fn new(data: f32, is_variable: bool) -> Self {
+    pub fn new(data: f32) -> Self {
         let id = get_id();
         Value_ {
             data: RefCell::new(data),
             id,
             op: Op::None,
             grad: RefCell::new(0.0),
-            is_variable
         }
     }
 
@@ -158,7 +150,7 @@ impl std::ops::Sub<&Value> for &Value {
     type Output = Value;
     fn sub(self, rhs: &Value) -> Self::Output {
         let d = self.get_data() - rhs.get_data();
-        let mut v = Value_::new(d, false);
+        let mut v = Value_::new(d);
         v.op = Op::Sub(self.clone(), rhs.clone());
         Value(Rc::new(v))
     }
@@ -170,7 +162,7 @@ impl std::ops::Add<&Value> for &Value {
 
     fn add(self, rhs: &Value) -> Self::Output {
         let d = self.get_data() + rhs.get_data();
-        let mut v = Value_::new(d, false);
+        let mut v = Value_::new(d);
         v.op = Op::Plus((*self).clone(), (*rhs).clone());
         Value(Rc::new(v))
     }
@@ -182,7 +174,7 @@ impl std::ops::Mul<&Value> for &Value {
 
     fn mul(self, rhs: &Value) -> Self::Output {
         let d = self.get_data() * rhs.get_data();
-        let mut v = Value_::new(d, false);
+        let mut v = Value_::new(d);
         v.op = Op::Mul((*self).clone(), (*rhs).clone());
         Value(Rc::new(v))
     }
@@ -235,17 +227,13 @@ impl Neuron {
     pub fn new(nin: usize) -> Self {
         let mut rng = rand::thread_rng();
         let range = -1.0f32..=1.0;
-        let random_numbers: Vec<f32> = (0..nin + 1)
-            .map(|_| {
-                rng.gen_range(range.clone())
-            })
-            .collect();
+        let random_numbers: Vec<f32> = (0..nin + 1).map(|_| rng.gen_range(range.clone())).collect();
         Neuron {
             weights: random_numbers[..nin]
                 .iter()
-                .map(|f| Value::new_variable(*f))
+                .map(|f| Value::new(*f))
                 .collect(),
-            bias: Value::new_variable(random_numbers[nin]),
+            bias: Value::new(random_numbers[nin]),
         }
     }
 
@@ -286,7 +274,10 @@ impl Layer {
     }
 
     pub fn get_parameters(&self) -> Vec<Value> {
-        self.neurons.iter().flat_map(|n| n.get_parameters()).collect()
+        self.neurons
+            .iter()
+            .flat_map(|n| n.get_parameters())
+            .collect()
     }
 }
 
@@ -315,18 +306,21 @@ impl MLP {
         input
     }
     pub fn get_parameters(&self) -> Vec<Value> {
-        self.layers.iter().flat_map(|n| n.get_parameters()).collect()
+        self.layers
+            .iter()
+            .flat_map(|n| n.get_parameters())
+            .collect()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
     use graphviz_rust::cmd::CommandArg::Output;
     use graphviz_rust::dot_generator::*;
     use graphviz_rust::dot_structures::*;
+    use graphviz_rust::{cmd::Format, exec, printer::PrinterContext};
 
-    use crate::{calculate_grad, MLP, Op, reverse_topological_order, topological_order, Value};
+    use crate::{calculate_grad, reverse_topological_order, topological_order, Op, Value, MLP};
 
     fn viz_computation_graph(value: &Value, graph: &mut Graph) {
         let reverse_tp_order = reverse_topological_order(value.clone());
@@ -373,14 +367,15 @@ mod tests {
         let ys = Value::new(-1.0);
         let lr = 0.01;
         let mut loss = Value::new(0.0);
-        for _ in 0..100 {
+        let n_iter = 100;
+        for _ in 0..n_iter {
             let y = nn.apply(&xs);
-            let diff = y.get(0).unwrap() - &ys;
+            let diff = y.first().unwrap() - &ys;
             loss = &diff * &diff;
             println!("loss={}", loss.get_data());
             calculate_grad(&loss);
             if loss.get_data() < 0.001 {
-                break
+                break;
             }
             for v in &mut nn.get_parameters() {
                 *v.data.borrow_mut() -= lr * v.get_grad();
@@ -393,7 +388,7 @@ mod tests {
             &mut PrinterContext::default(),
             vec![Format::Png.into(), Output("./mlp.png".into())],
         )
-            .unwrap();
+        .unwrap();
     }
 
     #[test]
