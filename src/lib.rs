@@ -14,6 +14,7 @@ enum Op {
     Plus(Value, Value),
     Mul(Value, Value),
     Tanh(Value),
+    Sub(Value, Value),
 }
 
 impl std::fmt::Display for Op {
@@ -30,6 +31,9 @@ impl std::fmt::Display for Op {
             }
             Op::Tanh(_) => {
                 write!(f, "tanh")
+            }
+            Op::Sub(_, _) => {
+                write!(f, "-")
             }
         }
     }
@@ -52,6 +56,9 @@ struct Value_ {
 
     /// derivative of root value w.r.t. this value
     grad: RefCell<f32>,
+
+    /// variable gets updated during optimization
+    is_variable: bool
 }
 
 impl Deref for Value {
@@ -92,6 +99,13 @@ fn calculate_grad(root: &Value) {
                 let grad = v.get_grad() * local_grad;
                 *v1.grad.borrow_mut() += grad;
             }
+            Op::Sub(v1, v2) => {
+                // v = v1 - v2
+                // d(v) / d(v1) = 1
+                // d(v) / d(v2) = -1
+                *v1.grad.borrow_mut() += v.get_grad();
+                *v2.grad.borrow_mut() += -v.get_grad();
+            }
         }
     }
 }
@@ -103,26 +117,31 @@ fn get_id() -> usize {
 
 impl Value {
     pub fn new(data: f32) -> Self {
-        Value(Rc::new(Value_::new(data)))
+        Value(Rc::new(Value_::new(data, false)))
+    }
+
+    pub fn new_variable(data: f32) -> Self {
+        Value(Rc::new(Value_::new(data, false)))
     }
 
     pub fn tanh(&self) -> Self {
         let d = *self.data.borrow();
         let t = ((2.0 * d).exp() - 1.0) / ((2.0 * d).exp() + 1.0);
-        let mut v = Value_::new(t);
+        let mut v = Value_::new(t, false);
         v.op = Op::Tanh(self.clone());
         Value(Rc::new(v))
     }
 }
 
 impl Value_ {
-    pub fn new(data: f32) -> Self {
+    pub fn new(data: f32, is_variable: bool) -> Self {
         let id = get_id();
         Value_ {
             data: RefCell::new(data),
             id,
             op: Op::None,
             grad: RefCell::new(0.0),
+            is_variable
         }
     }
 
@@ -135,13 +154,23 @@ impl Value_ {
     }
 }
 
+impl std::ops::Sub<&Value> for &Value {
+    type Output = Value;
+    fn sub(self, rhs: &Value) -> Self::Output {
+        let d = self.get_data() - rhs.get_data();
+        let mut v = Value_::new(d, false);
+        v.op = Op::Sub(self.clone(), rhs.clone());
+        Value(Rc::new(v))
+    }
+}
+
 /// Add operation
 impl std::ops::Add<&Value> for &Value {
     type Output = Value;
 
     fn add(self, rhs: &Value) -> Self::Output {
         let d = self.get_data() + rhs.get_data();
-        let mut v = Value_::new(d);
+        let mut v = Value_::new(d, false);
         v.op = Op::Plus((*self).clone(), (*rhs).clone());
         Value(Rc::new(v))
     }
@@ -153,7 +182,7 @@ impl std::ops::Mul<&Value> for &Value {
 
     fn mul(self, rhs: &Value) -> Self::Output {
         let d = self.get_data() * rhs.get_data();
-        let mut v = Value_::new(d);
+        let mut v = Value_::new(d, false);
         v.op = Op::Mul((*self).clone(), (*rhs).clone());
         Value(Rc::new(v))
     }
@@ -184,6 +213,10 @@ fn topological_order(value: Value) -> Vec<Value> {
                 Op::Tanh(v1) => {
                     build_topo(v1.clone(), visited, order);
                 }
+                Op::Sub(v1, v2) => {
+                    build_topo(v1.clone(), visited, order);
+                    build_topo(v2.clone(), visited, order);
+                }
             }
             order.push(value)
         }
@@ -210,10 +243,16 @@ impl Neuron {
         Neuron {
             weights: random_numbers[..nin]
                 .iter()
-                .map(|f| Value::new(*f))
+                .map(|f| Value::new_variable(*f))
                 .collect(),
-            bias: Value::new(random_numbers[nin]),
+            bias: Value::new_variable(random_numbers[nin]),
         }
+    }
+
+    pub fn get_parameters(&self) -> Vec<Value> {
+        let mut v = self.weights.clone();
+        v.push(self.bias.clone());
+        v
     }
 
     pub fn apply(&self, x: &[Value]) -> Value {
@@ -245,6 +284,10 @@ impl Layer {
     pub fn apply(&self, x: &[Value]) -> Vec<Value> {
         self.neurons.iter().map(|n| n.apply(x)).collect()
     }
+
+    pub fn get_parameters(&self) -> Vec<Value> {
+        self.neurons.iter().flat_map(|n| n.get_parameters()).collect()
+    }
 }
 
 struct MLP {
@@ -270,6 +313,9 @@ impl MLP {
             input = layer.apply(&input);
         }
         input
+    }
+    pub fn get_parameters(&self) -> Vec<Value> {
+        self.layers.iter().flat_map(|n| n.get_parameters()).collect()
     }
 }
 
@@ -312,28 +358,42 @@ mod tests {
                 Op::Tanh(v1) => {
                     add_edge(v1);
                 }
+                Op::Sub(v1, v2) => {
+                    add_edge(v1);
+                    add_edge(v2);
+                }
             }
         }
     }
 
     #[test]
     fn mlp() {
-        let nn = MLP::new(2, &[3, 2, 1]);
-        let x = vec![
-            Value::new(1.0),
-            Value::new(2.0),
-        ];
-        let r = nn.apply(&x);
-        let mut graph = graph!(id!("mlp"));
-        for v in &r {
-            viz_computation_graph(v, &mut graph);
+        let nn = MLP::new(2, &[3, 1]);
+        let xs = vec![Value::new(1.0), Value::new(-1.0)];
+        let ys = Value::new(-1.0);
+        let lr = 0.01;
+        let mut loss = Value::new(0.0);
+        for _ in 0..100 {
+            let y = nn.apply(&xs);
+            let diff = y.get(0).unwrap() - &ys;
+            loss = &diff * &diff;
+            println!("loss={}", loss.get_data());
+            calculate_grad(&loss);
+            if loss.get_data() < 0.001 {
+                break
+            }
+            for v in &mut nn.get_parameters() {
+                *v.data.borrow_mut() -= lr * v.get_grad();
+            }
         }
+        let mut graph = graph!(id!("mlp"));
+        viz_computation_graph(&loss, &mut graph);
         let _graph_svg = exec(
             graph,
             &mut PrinterContext::default(),
             vec![Format::Png.into(), Output("./mlp.png".into())],
         )
-        .unwrap();
+            .unwrap();
     }
 
     #[test]
